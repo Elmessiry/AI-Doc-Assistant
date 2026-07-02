@@ -10,6 +10,12 @@ export function chunkText(
   size = DEFAULT_SIZE,
   overlap = DEFAULT_OVERLAP,
 ): string[] {
+  if (size <= 0) {
+    throw new Error("chunk size must be a positive number");
+  }
+  if (overlap < 0) {
+    throw new Error("chunk overlap must not be negative");
+  }
   if (overlap >= size) {
     // step would be <= 0 and the loop below would never advance.
     throw new Error("chunk overlap must be smaller than chunk size");

@@ -79,9 +79,12 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           .select("id")
           .single();
 
-        if (insertError) {
+        // Treat a missing row the same as an error: if the insert didn't
+        // return the new id (e.g. insert ok but the select failed), we can't
+        // start processing, so roll back the stored bytes.
+        if (insertError || !inserted) {
           await supabase.storage.from("documents").remove([storagePath]);
-          setError(insertError.message);
+          setError(insertError?.message ?? "Could not save the document.");
           return;
         }
 
@@ -90,10 +93,14 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
         // route is the single source of truth for the document's status
         // (including rejecting non-PDFs), so fire it for every upload.
         // Same-origin fetch carries the auth cookie, so the route sees this user.
-        void fetch("/api/process-document", {
+        fetch("/api/process-document", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ documentId: inserted.id }),
+        }).catch(() => {
+          // Fire-and-forget: the document list reflects processing status via
+          // polling, so a failed kickoff (offline, navigation) needs no
+          // handling here — just swallow the rejection.
         });
 
         onUploaded?.();

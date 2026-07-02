@@ -36,8 +36,11 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!documentId) {
-    return Response.json({ error: "documentId is required" }, { status: 400 });
+  if (typeof documentId !== "string" || documentId.length === 0) {
+    return Response.json(
+      { error: "documentId (string) is required" },
+      { status: 400 },
+    );
   }
 
   // Records the outcome on the document row so the UI can show it. Scoped to
@@ -69,7 +72,16 @@ export async function POST(req: Request) {
     );
   }
 
-  await mark("processing");
+  // If we can't even record "processing", DB writes are failing — bail before
+  // doing the expensive download + parse work, and don't leave the UI polling
+  // a doc that will never move past "pending".
+  const { error: processingError } = await mark("processing");
+  if (processingError) {
+    return Response.json(
+      { error: "Could not update document status" },
+      { status: 500 },
+    );
+  }
 
   // Clear any chunks from a previous run up front. This makes reprocessing
   // idempotent AND guarantees a doc that ends up "failed" has no leftover
@@ -147,8 +159,13 @@ export async function POST(req: Request) {
     .insert(rows);
 
   if (insertError) {
+    // Keep the DB detail server-side; don't leak it to the client.
+    console.error("document_chunks insert failed:", insertError.message);
     await mark("failed", "Text was extracted but chunks could not be saved.");
-    return Response.json({ error: insertError.message }, { status: 500 });
+    return Response.json(
+      { error: "Could not save document chunks" },
+      { status: 500 },
+    );
   }
 
   await mark("processed");
