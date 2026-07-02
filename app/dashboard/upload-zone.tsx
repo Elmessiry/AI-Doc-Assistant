@@ -3,6 +3,18 @@
 import { useCallback, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+const MAX_FILE_SIZE = 1024 * 1024; // 1 MB — matches the bucket's size limit
+
+// Supabase Storage object keys only accept safe ASCII; "ü", spaces, etc.
+// trigger an "Invalid key" error. Fold accents to ASCII, then replace
+// anything still unsafe. The original name is kept in the file_name column.
+function sanitizeKey(name: string): string {
+  return name
+    .normalize("NFKD") // "ü" -> "u" + combining diaeresis
+    .replace(/[̀-ͯ]/g, "") // strip the combining marks -> plain ASCII
+    .replace(/[^a-zA-Z0-9._-]/g, "_"); // any remaining unsafe char -> "_"
+}
+
 type UploadZoneProps = {
   onUploaded?: () => void;
 };
@@ -16,6 +28,14 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
   const uploadFile = useCallback(
     async (file: File) => {
       setError(null);
+
+      // Fail fast in the browser so we never upload bytes we'd only reject.
+      // The bucket enforces this too, but this gives a friendly message first.
+      if (file.size > MAX_FILE_SIZE) {
+        setError("File is too large — the maximum size is 1 MB.");
+        return;
+      }
+
       setUploading(true);
 
       const supabase = createClient();
@@ -29,7 +49,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
         return;
       }
 
-      const storagePath = `${user.id}/${crypto.randomUUID()}-${file.name}`;
+      const storagePath = `${user.id}/${crypto.randomUUID()}-${sanitizeKey(file.name)}`;
 
       const { error: uploadError } = await supabase.storage
         .from("documents")

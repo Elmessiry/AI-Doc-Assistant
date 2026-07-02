@@ -37,6 +37,7 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
@@ -56,6 +57,41 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
     }
 
     setLoading(false);
+  }, []);
+
+  const deleteDocument = useCallback(async (doc: Document) => {
+    setError(null);
+    setDeletingId(doc.id);
+
+    const supabase = createClient();
+
+    // Remove the bytes first, then the metadata row. If the row delete
+    // fails we're left with an already-gone file — harmless — whereas the
+    // reverse could leave a visible row pointing at a missing file.
+    const { error: storageError } = await supabase.storage
+      .from("documents")
+      .remove([doc.storage_path]);
+
+    if (storageError) {
+      setError(storageError.message);
+      setDeletingId(null);
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("documents")
+      .delete()
+      .eq("id", doc.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      setDeletingId(null);
+      return;
+    }
+
+    // Drop it from local state immediately; no full refetch needed.
+    setDocuments((docs) => docs.filter((d) => d.id !== doc.id));
+    setDeletingId(null);
   }, []);
 
   useEffect(() => {
@@ -97,6 +133,16 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
               {formatBytes(doc.file_size)} · {formatDate(doc.created_at)}
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={() => void deleteDocument(doc)}
+            disabled={deletingId === doc.id}
+            aria-label={`Delete ${doc.file_name}`}
+            className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
+          >
+            {deletingId === doc.id ? "Deleting…" : "Delete"}
+          </button>
         </li>
       ))}
     </ul>
