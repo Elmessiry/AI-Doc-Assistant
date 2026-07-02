@@ -11,7 +11,7 @@ const MAX_FILE_SIZE = 1024 * 1024; // 1 MB — matches the bucket's size limit
 function sanitizeKey(name: string): string {
   return name
     .normalize("NFKD") // "ü" -> "u" + combining diaeresis
-    .replace(/[̀-ͯ]/g, "") // strip the combining marks -> plain ASCII
+    .replace(/[\u0300-\u036f]/g, "") // strip combining marks (U+0300–U+036F)
     .replace(/[^a-zA-Z0-9._-]/g, "_"); // any remaining unsafe char -> "_"
 }
 
@@ -38,52 +38,55 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
 
       setUploading(true);
 
-      const supabase = createClient();
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-      if (authError) {
-        setError(authError.message);
+        if (authError) {
+          setError(authError.message);
+          return;
+        }
+
+        if (!user) {
+          setError("Sign in to upload files.");
+          return;
+        }
+
+        const storagePath = `${user.id}/${crypto.randomUUID()}-${sanitizeKey(file.name)}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("documents")
+          .upload(storagePath, file);
+
+        if (uploadError) {
+          setError(uploadError.message);
+          return;
+        }
+
+        const { error: insertError } = await supabase.from("documents").insert({
+          user_id: user.id,
+          file_name: file.name,
+          file_size: file.size,
+          storage_path: storagePath,
+        });
+
+        if (insertError) {
+          await supabase.storage.from("documents").remove([storagePath]);
+          setError(insertError.message);
+          return;
+        }
+
+        onUploaded?.();
+      } catch (err) {
+        // An unexpected throw (SDK/runtime) — surface it and never leave
+        // the zone stuck in the uploading state.
+        setError(err instanceof Error ? err.message : "Upload failed.");
+      } finally {
         setUploading(false);
-        return;
       }
-
-      if (!user) {
-        setError("Sign in to upload files.");
-        setUploading(false);
-        return;
-      }
-
-      const storagePath = `${user.id}/${crypto.randomUUID()}-${sanitizeKey(file.name)}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("documents")
-        .upload(storagePath, file);
-
-      if (uploadError) {
-        setError(uploadError.message);
-        setUploading(false);
-        return;
-      }
-
-      const { error: insertError } = await supabase.from("documents").insert({
-        user_id: user.id,
-        file_name: file.name,
-        file_size: file.size,
-        storage_path: storagePath,
-      });
-
-      if (insertError) {
-        await supabase.storage.from("documents").remove([storagePath]);
-        setError(insertError.message);
-        setUploading(false);
-        return;
-      }
-
-      setUploading(false);
-      onUploaded?.();
     },
     [onUploaded],
   );

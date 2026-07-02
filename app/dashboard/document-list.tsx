@@ -43,56 +43,64 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
     setLoading(true);
     setError(null);
 
-    const supabase = createClient();
-    const { data, error: fetchError } = await supabase
-      .from("documents")
-      .select("id, file_name, file_size, storage_path, created_at")
-      .order("created_at", { ascending: false });
+    try {
+      const supabase = createClient();
+      const { data, error: fetchError } = await supabase
+        .from("documents")
+        .select("id, file_name, file_size, storage_path, created_at")
+        .order("created_at", { ascending: false });
 
-    if (fetchError) {
-      setError(fetchError.message);
+      if (fetchError) {
+        setError(fetchError.message);
+        setDocuments([]);
+      } else {
+        setDocuments(data ?? []);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load documents.");
       setDocuments([]);
-    } else {
-      setDocuments(data ?? []);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }, []);
 
   const deleteDocument = useCallback(async (doc: Document) => {
     setError(null);
     setDeletingId(doc.id);
 
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    // Remove the bytes first, then the metadata row. Bytes-first is
-    // retryable: if the row delete fails the row remains, so the user can
-    // click delete again and it self-heals. The tradeoff is a brief window
-    // where the row still shows but its file is already gone.
-    const { error: storageError } = await supabase.storage
-      .from("documents")
-      .remove([doc.storage_path]);
+      // Remove the bytes first, then the metadata row. Bytes-first is
+      // retryable: if the row delete fails the row remains, so the user can
+      // click delete again and it self-heals. The tradeoff is a brief window
+      // where the row still shows but its file is already gone.
+      const { error: storageError } = await supabase.storage
+        .from("documents")
+        .remove([doc.storage_path]);
 
-    if (storageError) {
-      setError(storageError.message);
+      if (storageError) {
+        setError(storageError.message);
+        return;
+      }
+
+      const { error: deleteError } = await supabase
+        .from("documents")
+        .delete()
+        .eq("id", doc.id);
+
+      if (deleteError) {
+        setError(deleteError.message);
+        return;
+      }
+
+      // Drop it from local state immediately; no full refetch needed.
+      setDocuments((docs) => docs.filter((d) => d.id !== doc.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete document.");
+    } finally {
       setDeletingId(null);
-      return;
     }
-
-    const { error: deleteError } = await supabase
-      .from("documents")
-      .delete()
-      .eq("id", doc.id);
-
-    if (deleteError) {
-      setError(deleteError.message);
-      setDeletingId(null);
-      return;
-    }
-
-    // Drop it from local state immediately; no full refetch needed.
-    setDocuments((docs) => docs.filter((d) => d.id !== doc.id));
-    setDeletingId(null);
   }, []);
 
   useEffect(() => {
