@@ -74,7 +74,20 @@ export async function POST(req: Request) {
   // Clear any chunks from a previous run up front. This makes reprocessing
   // idempotent AND guarantees a doc that ends up "failed" has no leftover
   // chunks — a non-searchable doc should never have searchable content.
-  await supabase.from("document_chunks").delete().eq("document_id", doc.id);
+  // If this fails, stop now: continuing could leave stale chunks behind
+  // while we later mark the doc processed, breaking that guarantee.
+  const { error: clearError } = await supabase
+    .from("document_chunks")
+    .delete()
+    .eq("document_id", doc.id);
+
+  if (clearError) {
+    await mark("failed", "Could not clear previous chunks before reprocessing.");
+    return Response.json(
+      { error: "Could not clear existing chunks" },
+      { status: 500 },
+    );
+  }
 
   // 4. Download the bytes from private storage. Returns a Blob.
   const { data: blob, error: downloadError } = await supabase.storage
@@ -116,7 +129,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const chunks = chunkText(text);
+  // Pass the already-cleaned text; chunkText's own whitespace collapse is
+  // idempotent, so this avoids re-scanning the raw string a second time.
+  const chunks = chunkText(meaningfulText);
 
   // 7. Bulk-insert the fresh set in a single round trip. Prior chunks were
   //    already cleared above when processing began.
