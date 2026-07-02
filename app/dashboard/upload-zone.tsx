@@ -41,7 +41,14 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       const supabase = createClient();
       const {
         data: { user },
+        error: authError,
       } = await supabase.auth.getUser();
+
+      if (authError) {
+        setError(authError.message);
+        setUploading(false);
+        return;
+      }
 
       if (!user) {
         setError("Sign in to upload files.");
@@ -135,7 +142,11 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           type="file"
           className="sr-only"
           disabled={uploading}
-          onChange={(e) => handleFiles(e.target.files)}
+          onChange={(e) => {
+            handleFiles(e.target.files);
+            // Reset so selecting the SAME file again still fires onChange.
+            e.target.value = "";
+          }}
         />
 
         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">

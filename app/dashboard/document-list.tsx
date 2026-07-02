@@ -65,9 +65,10 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
 
     const supabase = createClient();
 
-    // Remove the bytes first, then the metadata row. If the row delete
-    // fails we're left with an already-gone file — harmless — whereas the
-    // reverse could leave a visible row pointing at a missing file.
+    // Remove the bytes first, then the metadata row. Bytes-first is
+    // retryable: if the row delete fails the row remains, so the user can
+    // click delete again and it self-heals. The tradeoff is a brief window
+    // where the row still shows but its file is already gone.
     const { error: storageError } = await supabase.storage
       .from("documents")
       .remove([doc.storage_path]);
@@ -137,7 +138,7 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
           <button
             type="button"
             onClick={() => void deleteDocument(doc)}
-            disabled={deletingId === doc.id}
+            disabled={deletingId !== null}
             aria-label={`Delete ${doc.file_name}`}
             className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
           >
