@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { DashboardContent } from "./dashboard-content";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -11,5 +12,9 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  return <p>Signed in as {user.email}</p>;
+  return (
+    <main className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
+      <DashboardContent email={user.email ?? "you"} />
+    </main>
+  );
 }
