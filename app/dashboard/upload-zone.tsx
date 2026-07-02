@@ -3,7 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-const MAX_FILE_SIZE = 1024 * 1024; // 1 MB — matches the bucket's size limit
+const MAX_FILE_SIZE_MB = 1;
+// Bytes, using binary MiB to match Supabase's bucket size limit.
+const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 // Supabase Storage object keys only accept safe ASCII; "ü", spaces, etc.
 // trigger an "Invalid key" error. Fold accents to ASCII, then replace
@@ -32,7 +34,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       // Fail fast in the browser so we never upload bytes we'd only reject.
       // The bucket enforces this too, but this gives a friendly message first.
       if (file.size > MAX_FILE_SIZE) {
-        setError("File is too large — the maximum size is 1 MB.");
+        setError(`File is too large — the maximum size is ${MAX_FILE_SIZE_MB} MB.`);
         return;
       }
 
@@ -107,7 +109,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
 
       <div
         role="button"
-        tabIndex={0}
+        tabIndex={uploading ? -1 : 0}
         aria-disabled={uploading}
         aria-label="Upload a document"
         onClick={() => !uploading && inputRef.current?.click()}
