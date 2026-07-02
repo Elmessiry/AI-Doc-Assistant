@@ -96,14 +96,26 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
         .order("created_at", { ascending: false });
 
       if (fetchError) {
-        setError(fetchError.message);
-        setDocuments([]);
+        // A background poll must not blow away the visible list on a transient
+        // error — keep the current documents (a new array ref so the poll
+        // effect re-runs and retries) and only surface the error to the user
+        // on a foreground load.
+        if (silent) {
+          setDocuments((prev) => [...prev]);
+        } else {
+          setError(fetchError.message);
+          setDocuments([]);
+        }
       } else {
         setDocuments(data ?? []);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load documents.");
-      setDocuments([]);
+      if (silent) {
+        setDocuments((prev) => [...prev]);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to load documents.");
+        setDocuments([]);
+      }
     } finally {
       if (!silent) setLoading(false);
     }
