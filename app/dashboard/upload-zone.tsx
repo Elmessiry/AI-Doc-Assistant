@@ -68,18 +68,33 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           return;
         }
 
-        const { error: insertError } = await supabase.from("documents").insert({
-          user_id: user.id,
-          file_name: file.name,
-          file_size: file.size,
-          storage_path: storagePath,
-        });
+        const { data: inserted, error: insertError } = await supabase
+          .from("documents")
+          .insert({
+            user_id: user.id,
+            file_name: file.name,
+            file_size: file.size,
+            storage_path: storagePath,
+          })
+          .select("id")
+          .single();
 
         if (insertError) {
           await supabase.storage.from("documents").remove([storagePath]);
           setError(insertError.message);
           return;
         }
+
+        // Kick off text extraction. Fire-and-forget: the upload has already
+        // succeeded, so a processing hiccup must not fail the UI here. The
+        // route is the single source of truth for the document's status
+        // (including rejecting non-PDFs), so fire it for every upload.
+        // Same-origin fetch carries the auth cookie, so the route sees this user.
+        void fetch("/api/process-document", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ documentId: inserted.id }),
+        });
 
         onUploaded?.();
       } catch (err) {

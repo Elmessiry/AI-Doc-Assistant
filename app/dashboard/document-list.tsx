@@ -3,17 +3,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+export type DocumentStatus = "pending" | "processing" | "processed" | "failed";
+
 export type Document = {
   id: string;
   file_name: string;
   file_size: number;
   storage_path: string;
   created_at: string;
+  status: DocumentStatus;
+  status_detail: string | null;
 };
 
 type DocumentListProps = {
   refreshKey?: number;
 };
+
+// How often to re-check documents that are still being processed.
+const POLL_INTERVAL_MS = 2000;
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -33,21 +40,59 @@ function formatDate(iso: string): string {
   }).format(new Date(iso));
 }
 
+const STATUS_STYLES: Record<DocumentStatus, { label: string; className: string }> =
+  {
+    pending: {
+      label: "Queued",
+      className:
+        "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+    },
+    processing: {
+      label: "Processing…",
+      className:
+        "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
+    },
+    processed: {
+      label: "Searchable",
+      className:
+        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+    },
+    failed: {
+      label: "Failed",
+      className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
+    },
+  };
+
+function StatusBadge({ status }: { status: DocumentStatus }) {
+  const { label, className } = STATUS_STYLES[status];
+  return (
+    <span
+      className={`inline-block shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${className}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const fetchDocuments = useCallback(async () => {
-    setLoading(true);
+  // `silent` skips the full-screen loading state so background polling
+  // doesn't blank the list every couple of seconds.
+  const fetchDocuments = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
 
     try {
       const supabase = createClient();
       const { data, error: fetchError } = await supabase
         .from("documents")
-        .select("id, file_name, file_size, storage_path, created_at")
+        .select(
+          "id, file_name, file_size, storage_path, created_at, status, status_detail",
+        )
         .order("created_at", { ascending: false });
 
       if (fetchError) {
@@ -60,7 +105,7 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
       setError(err instanceof Error ? err.message : "Failed to load documents.");
       setDocuments([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -107,6 +152,19 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
     void fetchDocuments();
   }, [fetchDocuments, refreshKey]);
 
+  // While any document is still being processed, poll quietly until every
+  // document reaches a terminal state (processed or failed). This effect
+  // re-runs whenever `documents` changes, so it self-terminates.
+  useEffect(() => {
+    const stillWorking = documents.some(
+      (d) => d.status === "pending" || d.status === "processing",
+    );
+    if (!stillWorking) return;
+
+    const timer = setTimeout(() => void fetchDocuments(true), POLL_INTERVAL_MS);
+    return () => clearTimeout(timer);
+  }, [documents, fetchDocuments]);
+
   if (loading) {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
   }
@@ -135,12 +193,20 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
           className="flex items-center justify-between gap-4 px-4 py-3"
         >
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-              {doc.file_name}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {doc.file_name}
+              </p>
+              <StatusBadge status={doc.status} />
+            </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               {formatBytes(doc.file_size)} · {formatDate(doc.created_at)}
             </p>
+            {doc.status === "failed" && doc.status_detail && (
+              <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
+                {doc.status_detail}
+              </p>
+            )}
           </div>
 
           <button
