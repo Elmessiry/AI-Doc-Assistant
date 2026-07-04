@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { ChatPanel } from "./chat-panel";
 
 export type DocumentStatus = "pending" | "processing" | "processed" | "failed";
 
@@ -79,6 +80,8 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // The document whose chat panel is open, or null when the panel is closed.
+  const [chatDoc, setChatDoc] = useState<Document | null>(null);
 
   // `silent` skips the full-screen loading state so background polling
   // doesn't blank the list every couple of seconds.
@@ -198,6 +201,7 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
   }
 
   return (
+    <>
     <ul className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
       {documents.map((doc) => (
         <li
@@ -221,17 +225,39 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={() => void deleteDocument(doc)}
-            disabled={deletingId !== null}
-            aria-label={`Delete ${doc.file_name}`}
-            className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
-          >
-            {deletingId === doc.id ? "Deleting…" : "Delete"}
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {doc.status === "processed" && (
+              <button
+                type="button"
+                onClick={() => setChatDoc(doc)}
+                aria-label={`Chat about ${doc.file_name}`}
+                className="rounded-md px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Chat
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void deleteDocument(doc)}
+              disabled={deletingId !== null}
+              aria-label={`Delete ${doc.file_name}`}
+              className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
+            >
+              {deletingId === doc.id ? "Deleting…" : "Delete"}
+            </button>
+          </div>
         </li>
       ))}
     </ul>
+
+      {chatDoc && (
+        <ChatPanel
+          documentId={chatDoc.id}
+          fileName={chatDoc.file_name}
+          onClose={() => setChatDoc(null)}
+        />
+      )}
+    </>
   );
 }

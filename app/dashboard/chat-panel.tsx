@@ -1,0 +1,184 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+// UI-local message shape. Distinct from the server's ChatMessage (which also
+// has a "system" role) — the UI only ever renders the user's questions and the
+// assistant's replies.
+type Message = { role: "user" | "assistant"; content: string };
+
+type ChatPanelProps = {
+  documentId: string;
+  fileName: string;
+  onClose: () => void;
+};
+
+export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Keep the newest message in view as tokens stream in. Reading a ref and
+  // calling scrollIntoView (no setState) keeps this effect side-effect-only.
+  const endRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    const question = input.trim();
+    if (question.length === 0 || sending) return;
+
+    setError(null);
+    setInput("");
+    // Push the question and an empty assistant bubble; the bubble fills in as
+    // tokens arrive. Tracking the placeholder by position (last item) lets the
+    // stream loop keep rewriting just that entry.
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: question },
+      { role: "assistant", content: "" },
+    ]);
+    setSending(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: question, documentId }),
+      });
+
+      // On a non-2xx the route returns a JSON error, not a token stream — read
+      // it as JSON so we surface the real reason (401, 404, 502, …).
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? "The chat request failed.");
+      }
+
+      // Read the plain-text stream chunk by chunk, appending each piece to the
+      // assistant bubble so the answer grows on screen as it's generated.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let answer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        answer += decoder.decode(value, { stream: true });
+        setMessages((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = { role: "assistant", content: answer };
+          return next;
+        });
+      }
+
+      if (answer.trim().length === 0) {
+        setMessages((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            role: "assistant",
+            content: "(No answer was returned.)",
+          };
+          return next;
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+      // Drop the empty placeholder so a failed turn doesn't leave a blank bubble.
+      setMessages((prev) =>
+        prev.filter(
+          (msg, i) =>
+            !(i === prev.length - 1 && msg.role === "assistant" && msg.content === ""),
+        ),
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Chat about ${fileName}`}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    >
+      <div className="flex h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+        <header className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            {fileName}
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close chat"
+            className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          >
+            Close
+          </button>
+        </header>
+
+        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          {messages.length === 0 && (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Ask a question about this document.
+            </p>
+          )}
+
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              className={
+                msg.role === "user" ? "flex justify-end" : "flex justify-start"
+              }
+            >
+              <div
+                className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
+                  msg.role === "user"
+                    ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
+                    : "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                }`}
+              >
+                {msg.content ||
+                  (sending ? "…" : "")}
+              </div>
+            </div>
+          ))}
+          <div ref={endRef} />
+        </div>
+
+        {error && (
+          <p
+            role="alert"
+            className="border-t border-zinc-200 px-4 py-2 text-xs text-red-600 dark:border-zinc-800 dark:text-red-400"
+          >
+            {error}
+          </p>
+        )}
+
+        <form
+          onSubmit={send}
+          className="flex items-center gap-2 border-t border-zinc-200 p-3 dark:border-zinc-800"
+        >
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask a question…"
+            disabled={sending}
+            className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+          <button
+            type="submit"
+            disabled={sending || input.trim().length === 0}
+            className="shrink-0 rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-50 hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          >
+            {sending ? "…" : "Send"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
