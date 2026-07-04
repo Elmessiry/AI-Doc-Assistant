@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { chatCompletion, type ChatMessage } from "@/lib/openrouter";
 
 // Default (Node.js) runtime is fine here: no pdf.js, just a DB read and — in
 // the next step — an outbound fetch to OpenRouter. Both run on Node.
@@ -68,7 +69,54 @@ export async function POST(req: Request) {
     );
   }
 
-  // Generation (prompt + OpenRouter call) lands in the next commit. For now,
-  // prove retrieval works end-to-end by reporting what we found.
-  return Response.json({ documentId, chunkCount: chunks.length });
+  // 4. GENERATION. Glue the chunks back into one context blob (blank line
+  //    between chunks so the model reads them as distinct passages), then
+  //    assemble the chat messages.
+  const context = chunks.map((c) => c.content).join("\n\n");
+
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You answer questions about the user's document. Use only the " +
+        "information in the provided context. If the answer is not in the " +
+        "context, say you don't know — do not invent facts.",
+    },
+    {
+      role: "user",
+      content: `Context from the document:\n\n${context}\n\nQuestion: ${message}`,
+    },
+  ];
+
+  // 5. Ask the model. Non-streaming for now: wait for the whole answer, then
+  //    return it as JSON. Streaming is the next commit.
+  let modelRes: Response;
+  try {
+    modelRes = await chatCompletion(messages, { stream: false });
+  } catch (err) {
+    // Thrown only when the key is missing — a server config problem.
+    console.error("chat: could not start model request:", err);
+    return Response.json({ error: "Chat is not configured" }, { status: 500 });
+  }
+
+  if (!modelRes.ok) {
+    // Log the upstream detail server-side; return a generic 502 to the client.
+    console.error("chat: model error", modelRes.status, await modelRes.text());
+    return Response.json(
+      { error: "The model could not answer right now" },
+      { status: 502 },
+    );
+  }
+
+  const data = await modelRes.json();
+  const answer = data?.choices?.[0]?.message?.content;
+  if (typeof answer !== "string") {
+    console.error("chat: unexpected model response shape");
+    return Response.json(
+      { error: "The model returned no answer" },
+      { status: 502 },
+    );
+  }
+
+  return Response.json({ answer });
 }

@@ -6,9 +6,10 @@
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-// mistral-7b-instruct: cheap, fast, and good enough for demo Q&A over a single
-// document. Swap the id here to change models — nothing else needs to know.
-export const CHAT_MODEL = "mistralai/mistral-7b-instruct";
+// mistral-nemo: cheap (~$0.02/$0.03 per M tokens), fast, 128k context — good
+// for demo Q&A over a whole document. Verified live against OpenRouter's model
+// list; ids drift, so confirm one exists before swapping it here.
+export const CHAT_MODEL = "mistralai/mistral-nemo";
 
 // The three roles a chat completion understands. `system` sets the rules,
 // `user` is the question, `assistant` is the model's reply (used when we
