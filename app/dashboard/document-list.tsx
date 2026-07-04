@@ -163,7 +163,13 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
     }
   }, []);
 
+  // Fetch on mount and whenever a new upload bumps refreshKey. The list is
+  // server data, not state derivable during render, so an effect is the right
+  // tool here — the synchronous setLoading/setError inside fetchDocuments is
+  // intentional (it shows the loading state), which is what the lint rule
+  // flags. Suppress it deliberately rather than contort a correct fetch.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchDocuments();
   }, [fetchDocuments, refreshKey]);
 
