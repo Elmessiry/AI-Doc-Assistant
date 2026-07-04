@@ -42,3 +42,52 @@ export function chatCompletion(
     body: JSON.stringify({ model: CHAT_MODEL, messages, stream }),
   });
 }
+
+// Parses a streaming chat Response (call chatCompletion with stream: true) and
+// yields just the text deltas as they arrive.
+//
+// SSE framing: events are separated by a blank line; each carries one or more
+// `data: <payload>` lines. The stream ends with a literal `data: [DONE]`.
+// Every payload (except [DONE]) is a JSON chunk whose choices[0].delta.content
+// holds the next piece of text — sometimes empty, which we skip. OpenRouter
+// also sends `: ...` comment lines as keep-alives; those aren't `data:` so
+// they fall through untouched.
+export async function* streamChatDeltas(res: Response): AsyncGenerator<string> {
+  if (!res.body) throw new Error("streaming response has no body");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    // A single network read may contain several events, or half of one — so
+    // we accumulate and only process complete, blank-line-terminated events,
+    // leaving any trailing partial in the buffer for the next read.
+    buffer += decoder.decode(value, { stream: true });
+
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const event = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+
+      for (const line of event.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+
+        const payload = trimmed.slice(5).trim();
+        if (payload === "[DONE]") return;
+
+        try {
+          const json = JSON.parse(payload);
+          const text = json?.choices?.[0]?.delta?.content;
+          if (typeof text === "string" && text.length > 0) yield text;
+        } catch {
+          // Non-JSON keep-alive or a partial line — ignore and move on.
+        }
+      }
+    }
+  }
+}

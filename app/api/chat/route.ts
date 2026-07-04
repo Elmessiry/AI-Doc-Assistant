@@ -1,5 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
-import { chatCompletion, type ChatMessage } from "@/lib/openrouter";
+import {
+  chatCompletion,
+  streamChatDeltas,
+  type ChatMessage,
+} from "@/lib/openrouter";
 
 // Default (Node.js) runtime is fine here: no pdf.js, just a DB read and — in
 // the next step — an outbound fetch to OpenRouter. Both run on Node.
@@ -88,11 +92,12 @@ export async function POST(req: Request) {
     },
   ];
 
-  // 5. Ask the model. Non-streaming for now: wait for the whole answer, then
-  //    return it as JSON. Streaming is the next commit.
+  // 5. Ask the model, streaming. On stream:true OpenRouter still replies with
+  //    a normal JSON error (and non-200 status) if something is wrong up front,
+  //    so we can check res.ok BEFORE we commit to a streaming response.
   let modelRes: Response;
   try {
-    modelRes = await chatCompletion(messages, { stream: false });
+    modelRes = await chatCompletion(messages, { stream: true });
   } catch (err) {
     // Thrown only when the key is missing — a server config problem.
     console.error("chat: could not start model request:", err);
@@ -108,15 +113,33 @@ export async function POST(req: Request) {
     );
   }
 
-  const data = await modelRes.json();
-  const answer = data?.choices?.[0]?.message?.content;
-  if (typeof answer !== "string") {
-    console.error("chat: unexpected model response shape");
-    return Response.json(
-      { error: "The model returned no answer" },
-      { status: 502 },
-    );
-  }
+  // 6. Bridge the model's SSE stream to a plain-text stream for the browser:
+  //    parse each delta server-side, enqueue the raw token. The browser reads
+  //    response.body and appends strings — no SSE parsing needed on the client.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const delta of streamChatDeltas(modelRes)) {
+          controller.enqueue(encoder.encode(delta));
+        }
+      } catch (err) {
+        // Mid-stream failure: status/headers are already sent, so we can't turn
+        // this into a 5xx. Log it and close cleanly — the client sees a short
+        // (or empty) answer rather than a hang.
+        console.error("chat: stream interrupted:", err);
+      } finally {
+        controller.close();
+      }
+    },
+  });
 
-  return Response.json({ answer });
+  return new Response(stream, {
+    headers: {
+      // Plain text, streamed via chunked transfer encoding. no-store keeps
+      // proxies/browser from caching a half-answer.
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }
