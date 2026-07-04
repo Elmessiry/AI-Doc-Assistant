@@ -45,7 +45,37 @@ export async function POST(req: Request) {
     );
   }
 
-  // 3. RETRIEVAL. v1 strategy: fetch *all* chunks for this document, ordered
+  // 3. RATE LIMIT: 30 messages per hour per user. The cost we're guarding is
+  //    the model call, which no RLS policy can see — so we count this user's
+  //    requests in a per-request log table over a rolling one-hour window.
+  //    The counter lives in the DB (not memory) because serverless instances
+  //    share no RAM. RLS scopes the count to the caller's own rows.
+  const RATE_WINDOW_MS = 60 * 60 * 1000;
+  const RATE_MAX = 30;
+  const windowStart = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
+
+  const { count, error: rateError } = await supabase
+    .from("chat_requests")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", windowStart);
+
+  if (rateError) {
+    // Fail closed: if we can't verify the limit, don't spend on the model.
+    console.error("chat: rate-limit count failed:", rateError.message);
+    return Response.json(
+      { error: "Could not verify rate limit" },
+      { status: 500 },
+    );
+  }
+
+  if ((count ?? 0) >= RATE_MAX) {
+    return Response.json(
+      { error: "Rate limit reached — 30 messages per hour. Try again later." },
+      { status: 429 },
+    );
+  }
+
+  // 4. RETRIEVAL. v1 strategy: fetch *all* chunks for this document, ordered
   //    so the model reads them in the document's own sequence. RLS on
   //    document_chunks limits this to the caller's rows, so another user's id
   //    simply returns nothing rather than leaking content.
@@ -73,7 +103,24 @@ export async function POST(req: Request) {
     );
   }
 
-  // 4. GENERATION. Glue the chunks back into one context blob (blank line
+  // 5. Record this request for the rate-limit window. We log only now — after
+  //    retrieval succeeds — so validation errors and 404s don't count against
+  //    the user. RLS's own check ties the row to auth.uid(); we pass user_id
+  //    explicitly for clarity. (Check-then-insert isn't atomic, so a burst of
+  //    concurrent requests could slip a couple over 30 — acceptable here.)
+  const { error: logError } = await supabase
+    .from("chat_requests")
+    .insert({ user_id: user.id });
+
+  if (logError) {
+    console.error("chat: rate-limit log insert failed:", logError.message);
+    return Response.json(
+      { error: "Could not record request" },
+      { status: 500 },
+    );
+  }
+
+  // 6. GENERATION. Glue the chunks back into one context blob (blank line
   //    between chunks so the model reads them as distinct passages), then
   //    assemble the chat messages.
   const context = chunks.map((c) => c.content).join("\n\n");
@@ -92,7 +139,7 @@ export async function POST(req: Request) {
     },
   ];
 
-  // 5. Ask the model, streaming. On stream:true OpenRouter still replies with
+  // 7. Ask the model, streaming. On stream:true OpenRouter still replies with
   //    a normal JSON error (and non-200 status) if something is wrong up front,
   //    so we can check res.ok BEFORE we commit to a streaming response.
   let modelRes: Response;
@@ -113,7 +160,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // 6. Bridge the model's SSE stream to a plain-text stream for the browser:
+  // 8. Bridge the model's SSE stream to a plain-text stream for the browser:
   //    parse each delta server-side, enqueue the raw token. The browser reads
   //    response.body and appends strings — no SSE parsing needed on the client.
   const encoder = new TextEncoder();
