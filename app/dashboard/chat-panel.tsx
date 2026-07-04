@@ -26,6 +26,53 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Holds the current request so we can cancel it. Streaming answers can run
+  // for seconds of paid generation, so an abandoned panel must abort — not
+  // keep pulling tokens no one will read.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    // Abort any in-flight stream when the panel unmounts (including on close).
+    return () => abortRef.current?.abort();
+  }, []);
+
+  // Move focus into the dialog when it opens so keyboard users start inside it.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Modal keyboard behaviour: Escape closes; Tab is trapped within the dialog
+  // so focus can't wander to the page behind it (what aria-modal promises).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   async function send(e: React.FormEvent) {
     e.preventDefault();
     const question = input.trim();
@@ -43,11 +90,15 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
     ]);
     setSending(true);
 
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: question, documentId }),
+        signal: ac.signal,
       });
 
       // On a non-2xx the route returns a JSON error, not a token stream — read
@@ -85,6 +136,9 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
         });
       }
     } catch (err) {
+      // Aborted because the panel closed/unmounted — the component is gone,
+      // so there's nothing to update. Just stop.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Something went wrong.");
       // Drop the empty placeholder so a failed turn doesn't leave a blank bubble.
       setMessages((prev) =>
@@ -100,6 +154,7 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Chat about ${fileName}`}
@@ -163,6 +218,7 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
           className="flex items-center gap-2 border-t border-zinc-200 p-3 dark:border-zinc-800"
         >
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}

@@ -49,7 +49,9 @@ export async function POST(req: Request) {
   //    the model call, which no RLS policy can see — so we count this user's
   //    requests in a per-request log table over a rolling one-hour window.
   //    The counter lives in the DB (not memory) because serverless instances
-  //    share no RAM. RLS scopes the count to the caller's own rows.
+  //    share no RAM. We filter on user_id explicitly (matching the insert
+  //    below) rather than leaning on RLS alone: a too-permissive policy would
+  //    otherwise let this count everyone's rows and mis-fire for all users.
   const RATE_WINDOW_MS = 60 * 60 * 1000;
   const RATE_MAX = 30;
   const windowStart = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
@@ -57,6 +59,7 @@ export async function POST(req: Request) {
   const { count, error: rateError } = await supabase
     .from("chat_requests")
     .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
     .gte("created_at", windowStart);
 
   if (rateError) {
