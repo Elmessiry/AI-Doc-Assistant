@@ -19,7 +19,7 @@ export function DashboardContent({ email, userId }: DashboardContentProps) {
   }, [userId]);
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-12">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 sm:gap-8 sm:px-6 sm:py-12">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           Documents
@@ -28,6 +28,14 @@ export function DashboardContent({ email, userId }: DashboardContentProps) {
           Signed in as {email}
         </p>
       </header>
+
+      {/* Informational only for now — the 3-document cap is not enforced yet. */}
+      <div
+        role="status"
+        className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      >
+        <span className="font-semibold">Free plan:</span> 3 documents max.
+      </div>
 
       <UploadZone onUploaded={() => setRefreshKey((key) => key + 1)} />
       <DocumentList refreshKey={refreshKey} />
