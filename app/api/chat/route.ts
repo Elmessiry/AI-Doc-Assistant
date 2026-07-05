@@ -173,14 +173,34 @@ export async function POST(req: Request) {
     );
   }
 
-  // 8. Bridge the model's SSE stream to a plain-text stream for the browser:
+  // 8. Persist the question — only now that an answer is actually coming, so
+  //    a refused model call leaves no orphan question in the history. History
+  //    is best-effort: a failed insert logs but never blocks the answer.
+  //    (Consts because TypeScript drops `let` narrowing inside the stream
+  //    closure below.)
+  const docId = documentId;
+  const question = message;
+
+  const { error: userMsgError } = await supabase.from("messages").insert({
+    user_id: user.id,
+    document_id: docId,
+    role: "user",
+    content: question,
+  });
+  if (userMsgError) {
+    console.error("chat: user message insert failed:", userMsgError.message);
+  }
+
+  // 9. Bridge the model's SSE stream to a plain-text stream for the browser:
   //    parse each delta server-side, enqueue the raw token. The browser reads
   //    response.body and appends strings — no SSE parsing needed on the client.
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      let answer = "";
       try {
         for await (const delta of streamChatDeltas(modelRes)) {
+          answer += delta;
           controller.enqueue(encoder.encode(delta));
         }
         const posthog = getPostHogClient();
@@ -195,6 +215,25 @@ export async function POST(req: Request) {
         // (or empty) answer rather than a hang.
         console.error("chat: stream interrupted:", err);
       } finally {
+        // Save whatever reached the client — after an interruption a partial
+        // answer still matches what the user saw. Same best-effort rule as
+        // the question insert: log failures, never break the stream.
+        if (answer.trim().length > 0) {
+          const { error: answerMsgError } = await supabase
+            .from("messages")
+            .insert({
+              user_id: user.id,
+              document_id: docId,
+              role: "assistant",
+              content: answer,
+            });
+          if (answerMsgError) {
+            console.error(
+              "chat: assistant message insert failed:",
+              answerMsgError.message,
+            );
+          }
+        }
         controller.close();
       }
     },
