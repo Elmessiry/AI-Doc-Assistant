@@ -6,6 +6,23 @@ const nextConfig: NextConfig = {
   // runtime. Bundling breaks that path ("Setting up fake worker failed").
   // Keep both as native node_modules requires so the worker resolves.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
+  async rewrites() {
+    return [
+      {
+        source: "/ingest/static/:path*",
+        destination: "https://eu-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/ingest/array/:path*",
+        destination: "https://eu-assets.i.posthog.com/array/:path*",
+      },
+      {
+        source: "/ingest/:path*",
+        destination: "https://eu.i.posthog.com/:path*",
+      },
+    ];
+  },
+  skipTrailingSlashRedirect: true,
 };
 
 export default withSentryConfig(nextConfig, {

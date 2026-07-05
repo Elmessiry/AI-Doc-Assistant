@@ -22,3 +22,14 @@ Sentry.init({
 });
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
+
+import posthog from "posthog-js";
+
+posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
+  api_host: "/ingest",
+  ui_host: "https://eu.posthog.com",
+  defaults: "2026-01-30",
+  // Sentry owns error tracking; PostHog only measures behaviour.
+  capture_exceptions: false,
+  debug: process.env.NODE_ENV === "development",
+});
