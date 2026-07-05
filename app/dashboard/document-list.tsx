@@ -172,6 +172,11 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
     }
   }, []);
 
+  const openChat = useCallback((doc: Document) => {
+    posthog.capture("chat_opened");
+    setChatDoc(doc);
+  }, []);
+
   // Fetch on mount and whenever a new upload bumps refreshKey. The list is
   // server data, not state derivable during render, so an effect is the right
   // tool here — the synchronous setLoading/setError inside fetchDocuments is
@@ -218,12 +223,9 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
   return (
     <>
       <ul className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-        {documents.map((doc) => (
-          <li
-            key={doc.id}
-            className="flex items-center justify-between gap-4 px-4 py-3"
-          >
-            <div className="min-w-0">
+        {documents.map((doc) => {
+          const info = (
+            <>
               <div className="flex items-center gap-2">
                 <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
                   {doc.file_name}
@@ -238,16 +240,35 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
                   {doc.status_detail}
                 </p>
               )}
-            </div>
+            </>
+          );
+
+          return (
+          <li
+            key={doc.id}
+            className="flex items-center justify-between gap-4 px-4 py-3"
+          >
+            {doc.status === "processed" ? (
+              // A processed document's whole row (not just the small Chat
+              // button) opens its chat — the primary action gets the big
+              // target. Other statuses have no chat to open, so plain text.
+              <button
+                type="button"
+                onClick={() => openChat(doc)}
+                aria-label={`Open chat about ${doc.file_name}`}
+                className="min-w-0 flex-1 cursor-pointer rounded-md text-left"
+              >
+                {info}
+              </button>
+            ) : (
+              <div className="min-w-0 flex-1">{info}</div>
+            )}
 
             <div className="flex shrink-0 items-center gap-1">
               {doc.status === "processed" && (
                 <button
                   type="button"
-                  onClick={() => {
-                    posthog.capture("chat_opened");
-                    setChatDoc(doc);
-                  }}
+                  onClick={() => openChat(doc)}
                   aria-label={`Chat about ${doc.file_name}`}
                   className="rounded-md px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 >
@@ -266,7 +287,8 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
               </button>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       {chatDoc && (
