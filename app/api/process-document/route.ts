@@ -1,5 +1,6 @@
 import { PDFParse } from "pdf-parse";
 import { createClient } from "@/lib/supabase/server";
+import { getPostHogClient } from "@/lib/posthog-server";
 import { chunkText } from "@/lib/chunk";
 
 // pdf-parse wraps Mozilla's pdf.js — heavy CPU work and Node-flavored
@@ -27,6 +28,9 @@ export async function POST(req: Request) {
   if (authError || !user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const distinctId = req.headers.get("x-posthog-distinct-id") || user.id;
+  const sessionId = req.headers.get("x-posthog-session-id");
 
   // 2. Read the body. A malformed JSON payload throws — catch it as a 400.
   let documentId: string | undefined;
@@ -66,6 +70,15 @@ export async function POST(req: Request) {
   // The bucket accepts any file type; the parser only understands PDFs.
   if (!doc.file_name.toLowerCase().endsWith(".pdf")) {
     await mark("failed", "Only PDF files can be processed.");
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId,
+      event: "document_processing_failed",
+      properties: {
+        failure_reason: "unsupported_file_type",
+        ...(sessionId && { $session_id: sessionId }),
+      },
+    });
     return Response.json(
       { error: "Only PDF files can be processed" },
       { status: 415 },
@@ -94,7 +107,10 @@ export async function POST(req: Request) {
     .eq("document_id", doc.id);
 
   if (clearError) {
-    await mark("failed", "Could not clear previous chunks before reprocessing.");
+    await mark(
+      "failed",
+      "Could not clear previous chunks before reprocessing.",
+    );
     return Response.json(
       { error: "Could not clear existing chunks" },
       { status: 500 },
@@ -135,6 +151,15 @@ export async function POST(req: Request) {
       "failed",
       "Little or no selectable text found — scanned or image-only PDFs aren't supported.",
     );
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId,
+      event: "document_processing_failed",
+      properties: {
+        failure_reason: "insufficient_text",
+        ...(sessionId && { $session_id: sessionId }),
+      },
+    });
     return Response.json(
       { error: "Not enough extractable text in this PDF" },
       { status: 422 },
@@ -169,5 +194,14 @@ export async function POST(req: Request) {
   }
 
   await mark("processed");
+  const posthog = getPostHogClient();
+  posthog.capture({
+    distinctId,
+    event: "document_processed",
+    properties: {
+      chunk_count: rows.length,
+      ...(sessionId && { $session_id: sessionId }),
+    },
+  });
   return Response.json({ documentId: doc.id, chunks: rows.length });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import posthog from "posthog-js";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -12,6 +13,8 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setStatus("loading");
+
+    posthog.capture("login_requested");
 
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOtp({

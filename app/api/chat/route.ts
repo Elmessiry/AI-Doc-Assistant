@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getPostHogClient } from "@/lib/posthog-server";
 import {
   chatCompletion,
   streamChatDeltas,
@@ -21,6 +22,9 @@ export async function POST(req: Request) {
   if (authError || !user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const distinctId = req.headers.get("x-posthog-distinct-id") || user.id;
+  const sessionId = req.headers.get("x-posthog-session-id");
 
   // 2. Read + validate the body. Malformed JSON throws → 400.
   let message: unknown;
@@ -72,6 +76,12 @@ export async function POST(req: Request) {
   }
 
   if ((count ?? 0) >= RATE_MAX) {
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId,
+      event: "chat_rate_limited",
+      properties: { ...(sessionId && { $session_id: sessionId }) },
+    });
     return Response.json(
       { error: "Rate limit reached — 30 messages per hour. Try again later." },
       { status: 429 },
@@ -173,6 +183,12 @@ export async function POST(req: Request) {
         for await (const delta of streamChatDeltas(modelRes)) {
           controller.enqueue(encoder.encode(delta));
         }
+        const posthog = getPostHogClient();
+        posthog.capture({
+          distinctId,
+          event: "chat_completed",
+          properties: { ...(sessionId && { $session_id: sessionId }) },
+        });
       } catch (err) {
         // Mid-stream failure: status/headers are already sent, so we can't turn
         // this into a 5xx. Log it and close cleanly — the client sees a short

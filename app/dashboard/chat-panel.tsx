@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import posthog from "posthog-js";
 
 // UI-local message shape. Distinct from the server's ChatMessage (which also
 // has a "system" role) — the UI only ever renders the user's questions and the
@@ -88,6 +89,11 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
       { role: "user", content: question },
       { role: "assistant", content: "" },
     ]);
+
+    posthog.capture("chat_message_sent", {
+      message_index: messages.length / 2,
+    });
+
     setSending(true);
 
     const ac = new AbortController();
@@ -96,7 +102,11 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-POSTHOG-DISTINCT-ID": posthog.get_distinct_id() ?? "",
+          "X-POSTHOG-SESSION-ID": posthog.get_session_id() ?? "",
+        },
         body: JSON.stringify({ message: question, documentId }),
         signal: ac.signal,
       });
@@ -144,7 +154,11 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
       setMessages((prev) =>
         prev.filter(
           (msg, i) =>
-            !(i === prev.length - 1 && msg.role === "assistant" && msg.content === ""),
+            !(
+              i === prev.length - 1 &&
+              msg.role === "assistant" &&
+              msg.content === ""
+            ),
         ),
       );
     } finally {
@@ -196,8 +210,7 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
                     : "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
                 }`}
               >
-                {msg.content ||
-                  (sending ? "…" : "")}
+                {msg.content || (sending ? "…" : "")}
               </div>
             </div>
           ))}
