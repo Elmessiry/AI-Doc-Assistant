@@ -240,7 +240,11 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
               <button
                 type="button"
                 onClick={() => void loadHistory()}
-                className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                // Reloading history swaps out the messages array; while an
+                // answer is streaming, the stream loop rewrites the last
+                // entry, so a mid-stream retry would corrupt the conversation.
+                disabled={sending}
+                className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
               >
                 Retry
               </button>
