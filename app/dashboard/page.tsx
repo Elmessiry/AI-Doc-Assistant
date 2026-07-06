@@ -14,7 +14,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
-      <DashboardContent email={user.email ?? "you"} />
+      <DashboardContent email={user.email ?? "you"} userId={user.id} />
     </main>
   );
 }

@@ -1,5 +1,6 @@
 import { PDFParse } from "pdf-parse";
 import { createClient } from "@/lib/supabase/server";
+import { captureServerEvent } from "@/lib/posthog-server";
 import { chunkText } from "@/lib/chunk";
 
 // pdf-parse wraps Mozilla's pdf.js — heavy CPU work and Node-flavored
@@ -66,6 +67,9 @@ export async function POST(req: Request) {
   // The bucket accepts any file type; the parser only understands PDFs.
   if (!doc.file_name.toLowerCase().endsWith(".pdf")) {
     await mark("failed", "Only PDF files can be processed.");
+    captureServerEvent(req, user.id, "document_processing_failed", {
+      failure_reason: "unsupported_file_type",
+    });
     return Response.json(
       { error: "Only PDF files can be processed" },
       { status: 415 },
@@ -94,7 +98,10 @@ export async function POST(req: Request) {
     .eq("document_id", doc.id);
 
   if (clearError) {
-    await mark("failed", "Could not clear previous chunks before reprocessing.");
+    await mark(
+      "failed",
+      "Could not clear previous chunks before reprocessing.",
+    );
     return Response.json(
       { error: "Could not clear existing chunks" },
       { status: 500 },
@@ -135,6 +142,9 @@ export async function POST(req: Request) {
       "failed",
       "Little or no selectable text found — scanned or image-only PDFs aren't supported.",
     );
+    captureServerEvent(req, user.id, "document_processing_failed", {
+      failure_reason: "insufficient_text",
+    });
     return Response.json(
       { error: "Not enough extractable text in this PDF" },
       { status: 422 },
@@ -169,5 +179,8 @@ export async function POST(req: Request) {
   }
 
   await mark("processed");
+  captureServerEvent(req, user.id, "document_processed", {
+    chunk_count: rows.length,
+  });
   return Response.json({ documentId: doc.id, chunks: rows.length });
 }

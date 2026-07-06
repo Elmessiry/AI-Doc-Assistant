@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import posthog from "posthog-js";
+import * as Sentry from "@sentry/nextjs";
 import { createClient } from "@/lib/supabase/client";
 
 const MAX_FILE_SIZE_MB = 1;
@@ -34,7 +36,13 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       // Fail fast in the browser so we never upload bytes we'd only reject.
       // The bucket enforces this too, but this gives a friendly message first.
       if (file.size > MAX_FILE_SIZE) {
-        setError(`File is too large — the maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+        posthog.capture("document_upload_failed", {
+          failure_reason: "file_too_large",
+          file_size_bytes: file.size,
+        });
+        setError(
+          `File is too large — the maximum size is ${MAX_FILE_SIZE_MB} MB.`,
+        );
         return;
       }
 
@@ -64,6 +72,9 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           .upload(storagePath, file);
 
         if (uploadError) {
+          posthog.capture("document_upload_failed", {
+            failure_reason: "storage_error",
+          });
           setError(uploadError.message);
           return;
         }
@@ -83,10 +94,17 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
         // return the new id (e.g. insert ok but the select failed), we can't
         // start processing, so roll back the stored bytes.
         if (insertError || !inserted) {
+          posthog.capture("document_upload_failed", {
+            failure_reason: "database_error",
+          });
           await supabase.storage.from("documents").remove([storagePath]);
           setError(insertError?.message ?? "Could not save the document.");
           return;
         }
+
+        posthog.capture("document_uploaded", {
+          file_size_bytes: file.size,
+        });
 
         // Kick off text extraction. Fire-and-forget: the upload has already
         // succeeded, so a processing hiccup must not fail the UI here. The
@@ -95,7 +113,10 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
         // Same-origin fetch carries the auth cookie, so the route sees this user.
         fetch("/api/process-document", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-POSTHOG-SESSION-ID": posthog.get_session_id() ?? "",
+          },
           body: JSON.stringify({ documentId: inserted.id }),
         }).catch(() => {
           // Fire-and-forget: the document list reflects processing status via
@@ -107,6 +128,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       } catch (err) {
         // An unexpected throw (SDK/runtime) — surface it and never leave
         // the zone stuck in the uploading state.
+        Sentry.captureException(err);
         setError(err instanceof Error ? err.message : "Upload failed.");
       } finally {
         setUploading(false);
@@ -185,10 +207,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       </div>
 
       {error && (
-        <p
-          role="alert"
-          className="mt-3 text-sm text-red-600 dark:text-red-400"
-        >
+        <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

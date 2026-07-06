@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import posthog from "posthog-js";
+import * as Sentry from "@sentry/nextjs";
 import { createClient } from "@/lib/supabase/client";
 import { ChatPanel } from "./chat-panel";
 
@@ -41,28 +43,29 @@ function formatDate(iso: string): string {
   }).format(new Date(iso));
 }
 
-const STATUS_STYLES: Record<DocumentStatus, { label: string; className: string }> =
-  {
-    pending: {
-      label: "Queued",
-      className:
-        "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-    },
-    processing: {
-      label: "Processing…",
-      className:
-        "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
-    },
-    processed: {
-      label: "Searchable",
-      className:
-        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-    },
-    failed: {
-      label: "Failed",
-      className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
-    },
-  };
+const STATUS_STYLES: Record<
+  DocumentStatus,
+  { label: string; className: string }
+> = {
+  pending: {
+    label: "Queued",
+    className: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  },
+  processing: {
+    label: "Processing…",
+    className:
+      "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
+  },
+  processed: {
+    label: "Searchable",
+    className:
+      "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+  },
+  failed: {
+    label: "Failed",
+    className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
+  },
+};
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
   const { label, className } = STATUS_STYLES[status];
@@ -116,7 +119,9 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
       if (silent) {
         setDocuments((prev) => [...prev]);
       } else {
-        setError(err instanceof Error ? err.message : "Failed to load documents.");
+        setError(
+          err instanceof Error ? err.message : "Failed to load documents.",
+        );
         setDocuments([]);
       }
     } finally {
@@ -155,12 +160,21 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
       }
 
       // Drop it from local state immediately; no full refetch needed.
+      posthog.capture("document_deleted");
       setDocuments((docs) => docs.filter((d) => d.id !== doc.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete document.");
+      Sentry.captureException(err);
+      setError(
+        err instanceof Error ? err.message : "Failed to delete document.",
+      );
     } finally {
       setDeletingId(null);
     }
+  }, []);
+
+  const openChat = useCallback((doc: Document) => {
+    posthog.capture("chat_opened");
+    setChatDoc(doc);
   }, []);
 
   // Fetch on mount and whenever a new upload bumps refreshKey. The list is
@@ -208,54 +222,74 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
 
   return (
     <>
-    <ul className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-      {documents.map((doc) => (
-        <li
-          key={doc.id}
-          className="flex items-center justify-between gap-4 px-4 py-3"
-        >
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                {doc.file_name}
+      <ul className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+        {documents.map((doc) => {
+          const info = (
+            <>
+              <div className="flex items-center gap-2">
+                <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                  {doc.file_name}
+                </p>
+                <StatusBadge status={doc.status} />
+              </div>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {formatBytes(doc.file_size)} · {formatDate(doc.created_at)}
               </p>
-              <StatusBadge status={doc.status} />
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {formatBytes(doc.file_size)} · {formatDate(doc.created_at)}
-            </p>
-            {doc.status === "failed" && doc.status_detail && (
-              <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
-                {doc.status_detail}
-              </p>
-            )}
-          </div>
+              {doc.status === "failed" && doc.status_detail && (
+                <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
+                  {doc.status_detail}
+                </p>
+              )}
+            </>
+          );
 
-          <div className="flex shrink-0 items-center gap-1">
-            {doc.status === "processed" && (
+          return (
+          <li
+            key={doc.id}
+            className="flex items-center justify-between gap-4 px-4 py-3"
+          >
+            {doc.status === "processed" ? (
+              // A processed document's whole row (not just the small Chat
+              // button) opens its chat — the primary action gets the big
+              // target. Other statuses have no chat to open, so plain text.
               <button
                 type="button"
-                onClick={() => setChatDoc(doc)}
-                aria-label={`Chat about ${doc.file_name}`}
-                className="rounded-md px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                onClick={() => openChat(doc)}
+                aria-label={`Open chat about ${doc.file_name}`}
+                className="min-w-0 flex-1 cursor-pointer rounded-md text-left"
               >
-                Chat
+                {info}
               </button>
+            ) : (
+              <div className="min-w-0 flex-1">{info}</div>
             )}
 
-            <button
-              type="button"
-              onClick={() => void deleteDocument(doc)}
-              disabled={deletingId !== null}
-              aria-label={`Delete ${doc.file_name}`}
-              className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
-            >
-              {deletingId === doc.id ? "Deleting…" : "Delete"}
-            </button>
-          </div>
-        </li>
-      ))}
-    </ul>
+            <div className="flex shrink-0 items-center gap-1">
+              {doc.status === "processed" && (
+                <button
+                  type="button"
+                  onClick={() => openChat(doc)}
+                  aria-label={`Chat about ${doc.file_name}`}
+                  className="rounded-md px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  Chat
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void deleteDocument(doc)}
+                disabled={deletingId !== null}
+                aria-label={`Delete ${doc.file_name}`}
+                className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
+              >
+                {deletingId === doc.id ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </li>
+          );
+        })}
+      </ul>
 
       {chatDoc && (
         <ChatPanel
