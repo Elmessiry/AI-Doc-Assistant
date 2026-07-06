@@ -32,11 +32,15 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
     setHistoryError(null);
     try {
       const supabase = createClient();
+      // supabase-js applies no timeout of its own; without one, a stalled
+      // request keeps loadingHistory true — and the input disabled — until
+      // the browser gives up on the connection, which can take minutes.
       const { data, error: fetchError } = await supabase
         .from("messages")
         .select("role, content")
         .eq("document_id", documentId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: true })
+        .abortSignal(AbortSignal.timeout(10_000));
 
       if (fetchError) {
         setHistoryError(fetchError.message);
