@@ -141,7 +141,6 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-POSTHOG-DISTINCT-ID": posthog.get_distinct_id() ?? "",
           "X-POSTHOG-SESSION-ID": posthog.get_session_id() ?? "",
         },
         body: JSON.stringify({ message: question, documentId }),

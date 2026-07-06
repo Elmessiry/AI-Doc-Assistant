@@ -32,12 +32,16 @@ export function captureServerEvent(
   event: string,
   properties: Record<string, unknown> = {},
 ) {
-  const distinctId = req.headers.get("x-posthog-distinct-id") || userId;
+  // The distinct id is always the authenticated user's id. A client-sent
+  // distinct-id header would let any signed-in caller attribute events to an
+  // arbitrary PostHog person. The session id has no server-side source of
+  // truth, so the header is accepted for replay correlation — it can only
+  // mislabel a session, not a person.
   const sessionId = req.headers.get("x-posthog-session-id");
 
   const posthog = getPostHogClient();
   posthog.capture({
-    distinctId,
+    distinctId: userId,
     event,
     properties: {
       ...properties,

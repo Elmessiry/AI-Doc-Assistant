@@ -115,7 +115,6 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-POSTHOG-DISTINCT-ID": posthog.get_distinct_id() ?? "",
             "X-POSTHOG-SESSION-ID": posthog.get_session_id() ?? "",
           },
           body: JSON.stringify({ documentId: inserted.id }),
