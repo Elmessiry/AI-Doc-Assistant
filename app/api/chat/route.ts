@@ -1,5 +1,6 @@
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { captureServerEvent, getPostHogClient } from "@/lib/posthog-server";
+import { captureServerEvent } from "@/lib/posthog-server";
 import {
   chatCompletion,
   streamChatDeltas,
@@ -22,9 +23,6 @@ export async function POST(req: Request) {
   if (authError || !user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-
-  const distinctId = req.headers.get("x-posthog-distinct-id") || user.id;
-  const sessionId = req.headers.get("x-posthog-session-id");
 
   // 2. Read + validate the body. Malformed JSON throws → 400.
   let message: unknown;
@@ -186,50 +184,67 @@ export async function POST(req: Request) {
     console.error("chat: user message insert failed:", userMsgError.message);
   }
 
-  // 9. Bridge the model's SSE stream to a plain-text stream for the browser:
+  // 9. Persist the answer and record completion AFTER the stream closes.
+  //    Holding controller.close() hostage to a DB insert means the client's
+  //    reader never sees done while the insert stalls — the Send button stays
+  //    stuck even though the whole answer is on screen. Registering the work
+  //    with after() (in handler scope, backed by waitUntil on serverless)
+  //    keeps the instance alive until the deferred writes settle.
+  let resolveStream!: (result: { answer: string; completed: boolean }) => void;
+  const streamResult = new Promise<{ answer: string; completed: boolean }>(
+    (resolve) => {
+      resolveStream = resolve;
+    },
+  );
+
+  after(async () => {
+    const { answer, completed } = await streamResult;
+    // Save whatever reached the client — after an interruption a partial
+    // answer still matches what the user saw. Same best-effort rule as the
+    // question insert: log failures, never surface them.
+    if (answer.trim().length > 0) {
+      const { error: answerMsgError } = await supabase.from("messages").insert({
+        user_id: user.id,
+        document_id: docId,
+        role: "assistant",
+        content: answer,
+      });
+      if (answerMsgError) {
+        console.error(
+          "chat: assistant message insert failed:",
+          answerMsgError.message,
+        );
+      }
+    }
+    if (completed) {
+      captureServerEvent(req, user.id, "chat_completed");
+    }
+  });
+
+  // 10. Bridge the model's SSE stream to a plain-text stream for the browser:
   //    parse each delta server-side, enqueue the raw token. The browser reads
   //    response.body and appends strings — no SSE parsing needed on the client.
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let answer = "";
+      let completed = false;
       try {
         for await (const delta of streamChatDeltas(modelRes)) {
           answer += delta;
           controller.enqueue(encoder.encode(delta));
         }
-        const posthog = getPostHogClient();
-        posthog.capture({
-          distinctId,
-          event: "chat_completed",
-          properties: { ...(sessionId && { $session_id: sessionId }) },
-        });
+        completed = true;
       } catch (err) {
         // Mid-stream failure: status/headers are already sent, so we can't turn
         // this into a 5xx. Log it and close cleanly — the client sees a short
         // (or empty) answer rather than a hang.
         console.error("chat: stream interrupted:", err);
       } finally {
-        // Save whatever reached the client — after an interruption a partial
-        // answer still matches what the user saw. Same best-effort rule as
-        // the question insert: log failures, never break the stream.
-        if (answer.trim().length > 0) {
-          const { error: answerMsgError } = await supabase
-            .from("messages")
-            .insert({
-              user_id: user.id,
-              document_id: docId,
-              role: "assistant",
-              content: answer,
-            });
-          if (answerMsgError) {
-            console.error(
-              "chat: assistant message insert failed:",
-              answerMsgError.message,
-            );
-          }
-        }
+        // Close first so the reader sees done immediately; persistence and
+        // the chat_completed capture run in the after() callback above.
         controller.close();
+        resolveStream({ answer, completed });
       }
     },
   });
