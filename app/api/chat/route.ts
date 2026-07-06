@@ -260,10 +260,15 @@ export async function POST(req: Request) {
         // (or empty) answer rather than a hang.
         console.error("chat: stream interrupted:", err);
       } finally {
-        // Close first so the reader sees done immediately; persistence and
-        // the chat_completed capture run in the after() callback above.
-        controller.close();
+        // Signal persistence BEFORE closing: when the client disconnects the
+        // stream is already cancelled and close() throws — a throw here must
+        // not stop the partial answer from being saved.
         resolveStream({ answer, completed });
+        try {
+          controller.close();
+        } catch {
+          // Client already cancelled the stream — nothing left to close.
+        }
       }
     },
   });
