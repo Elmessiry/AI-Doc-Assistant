@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { captureServerEvent, getPostHogClient } from "@/lib/posthog-server";
 import {
   chatCompletion,
   streamChatDeltas,
@@ -76,12 +76,7 @@ export async function POST(req: Request) {
   }
 
   if ((count ?? 0) >= RATE_MAX) {
-    const posthog = getPostHogClient();
-    posthog.capture({
-      distinctId,
-      event: "chat_rate_limited",
-      properties: { ...(sessionId && { $session_id: sessionId }) },
-    });
+    captureServerEvent(req, user.id, "chat_rate_limited");
     return Response.json(
       { error: "Rate limit reached — 30 messages per hour. Try again later." },
       { status: 429 },
