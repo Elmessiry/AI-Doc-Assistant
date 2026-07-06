@@ -126,9 +126,29 @@ export async function POST(req: Request) {
     );
   }
 
-  // 6. GENERATION. Glue the chunks back into one context blob (blank line
-  //    between chunks so the model reads them as distinct passages), then
-  //    assemble the chat messages.
+  // 6. CONVERSATION MEMORY. The UI shows a continuous conversation, so the
+  //    model must see it too — otherwise "summarize that" has no antecedent.
+  //    Load the latest turns (newest-first so LIMIT keeps the most recent,
+  //    then back into chronological order). Best-effort: without history the
+  //    model still answers the standalone question.
+  const HISTORY_LIMIT = 10;
+  const { data: history, error: historyError } = await supabase
+    .from("messages")
+    .select("role, content")
+    .eq("document_id", documentId)
+    .order("created_at", { ascending: false })
+    .limit(HISTORY_LIMIT);
+
+  if (historyError) {
+    console.error("chat: history fetch failed:", historyError.message);
+  }
+
+  const historyMessages = ((history ?? []) as ChatMessage[]).reverse();
+
+  // 7. GENERATION. Glue the chunks back into one context blob (blank line
+  //    between chunks so the model reads them as distinct passages). The
+  //    document context lives in the system message so every user turn —
+  //    past and present — stays a plain question.
   const context = chunks.map((c) => c.content).join("\n\n");
 
   const messages: ChatMessage[] = [
@@ -137,15 +157,14 @@ export async function POST(req: Request) {
       content:
         "You answer questions about the user's document. Use only the " +
         "information in the provided context. If the answer is not in the " +
-        "context, say you don't know — do not invent facts.",
+        "context, say you don't know — do not invent facts.\n\n" +
+        `Context from the document:\n\n${context}`,
     },
-    {
-      role: "user",
-      content: `Context from the document:\n\n${context}\n\nQuestion: ${message}`,
-    },
+    ...historyMessages,
+    { role: "user", content: message },
   ];
 
-  // 7. Ask the model, streaming. On stream:true OpenRouter still replies with
+  // 8. Ask the model, streaming. On stream:true OpenRouter still replies with
   //    a normal JSON error (and non-200 status) if something is wrong up front,
   //    so we can check res.ok BEFORE we commit to a streaming response.
   let modelRes: Response;
@@ -166,7 +185,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // 8. Persist the question — only now that an answer is actually coming, so
+  // 9. Persist the question — only now that an answer is actually coming, so
   //    a refused model call leaves no orphan question in the history. History
   //    is best-effort: a failed insert logs but never blocks the answer.
   //    (Consts because TypeScript drops `let` narrowing inside the stream
@@ -184,7 +203,7 @@ export async function POST(req: Request) {
     console.error("chat: user message insert failed:", userMsgError.message);
   }
 
-  // 9. Persist the answer and record completion AFTER the stream closes.
+  // 10. Persist the answer and record completion AFTER the stream closes.
   //    Holding controller.close() hostage to a DB insert means the client's
   //    reader never sees done while the insert stalls — the Send button stays
   //    stuck even though the whole answer is on screen. Registering the work
@@ -221,7 +240,7 @@ export async function POST(req: Request) {
     }
   });
 
-  // 10. Bridge the model's SSE stream to a plain-text stream for the browser:
+  // 11. Bridge the model's SSE stream to a plain-text stream for the browser:
   //    parse each delta server-side, enqueue the raw token. The browser reads
   //    response.body and appends strings — no SSE parsing needed on the client.
   const encoder = new TextEncoder();
