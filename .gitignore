@@ -46,3 +46,16 @@ next-env.d.ts
 
 # Local agent config / wizard artifacts
 .claude/
+CLAUDE.md
+AGENTS.md
+posthog-setup-report.md
+
+# testing (Playwright — added Day 6)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# IDE / editor
+.idea/
+*.swp
