@@ -1,65 +1,98 @@
-import Image from "next/image";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
 
-export default function Home() {
+const REPO_URL = "https://github.com/Elmessiry/AI-Doc-Assistant";
+
+export default async function Home() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const primary = user
+    ? { href: "/dashboard", label: "Open dashboard" }
+    : { href: "/login", label: "Sign in" };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
+    <main className="flex flex-1 items-center justify-center px-6 py-16">
+      <div className="w-full max-w-2xl">
+        <p
+          className="rise font-mono text-xs tracking-[0.2em] text-zinc-500 uppercase dark:text-zinc-400"
+          style={{ animationDelay: "0ms" }}
+        >
+          AI Document Assistant
+        </p>
+
+        <h1
+          className="rise mt-5 text-4xl leading-[1.1] font-semibold tracking-tight text-zinc-900 sm:text-5xl dark:text-zinc-50"
+          style={{ animationDelay: "60ms" }}
+        >
+          Chat with your documents.
+          <br />
+          <span className="text-zinc-500 dark:text-zinc-400">
+            Answers grounded in the source.
+          </span>
+        </h1>
+
+        <p
+          className="rise mt-6 max-w-xl text-lg leading-relaxed text-zinc-600 dark:text-zinc-300"
+          style={{ animationDelay: "120ms" }}
+        >
+          Upload a PDF, ask a question, and get an answer drawn only from that
+          file. Your documents stay private — isolation is enforced by Postgres,
+          not by application code.
+        </p>
+
+        <div
+          className="rise mt-8 flex flex-wrap items-center gap-3"
+          style={{ animationDelay: "180ms" }}
+        >
+          <Link
+            href={primary.href}
+            className="rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2 focus-visible:outline-none dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 dark:focus-visible:ring-offset-black"
+          >
+            {primary.label}
+          </Link>
           <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            href={REPO_URL}
             target="_blank"
             rel="noopener noreferrer"
+            className="rounded-lg px-5 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:outline-none dark:text-zinc-400 dark:hover:text-zinc-100"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
+            View source →
           </a>
         </div>
-      </main>
-    </div>
+
+        {/* Signature: the actual isolation model, in one policy. */}
+        <figure
+          className="rise mt-14 max-w-md"
+          style={{ animationDelay: "260ms" }}
+        >
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <pre className="font-mono text-[13px] leading-6 text-zinc-700 dark:text-zinc-300">
+              <span className="text-zinc-400 dark:text-zinc-500">
+                {"-- runs on every request, for every row\n"}
+              </span>
+              {'create policy "own documents" on documents\n'}
+              {"  using ( "}
+              <span className="text-emerald-600 dark:text-emerald-400">
+                user_id = auth.uid()
+              </span>
+              {" );"}
+            </pre>
+          </div>
+          <figcaption className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+            The database decides who sees what — not the app.
+          </figcaption>
+        </figure>
+
+        <p
+          className="rise mt-14 font-mono text-xs text-zinc-400 dark:text-zinc-500"
+          style={{ animationDelay: "320ms" }}
+        >
+          Next.js · Supabase · OpenRouter
+        </p>
+      </div>
+    </main>
   );
 }
