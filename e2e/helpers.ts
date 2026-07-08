@@ -1,6 +1,4 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { WebSocketLikeConstructor } from "@supabase/realtime-js";
-import WebSocket from "ws";
 
 // Fail loudly at import if a required var is missing, rather than producing a
 // confusing auth error deep inside a test. See .env.test.local.example.
@@ -18,14 +16,12 @@ export const SUPABASE_URL = required("NEXT_PUBLIC_SUPABASE_URL");
 export const ANON_KEY = required("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 export const TEST_EMAIL = required("E2E_TEST_EMAIL");
 export const TEST_PASSWORD = required("E2E_TEST_PASSWORD");
-const realtime = { transport: WebSocket as unknown as WebSocketLikeConstructor };
 
 // Service-role client bypasses RLS — used only in test setup/teardown to
 // provision the test user and to clean up its data. Never shipped to the app.
 export function adminClient(): SupabaseClient {
   return createClient(SUPABASE_URL, required("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { autoRefreshToken: false, persistSession: false },
-    realtime,
   });
 }
 
@@ -50,7 +46,6 @@ export async function ensureTestUser(): Promise<void> {
 export async function getTestUserId(): Promise<string> {
   const anon = createClient(SUPABASE_URL, ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
-    realtime,
   });
   const { data, error } = await anon.auth.signInWithPassword({
     email: TEST_EMAIL,
