@@ -42,7 +42,6 @@ setup("authenticate", async ({ context, baseURL }) => {
       name: c.name,
       value: c.value,
       url: baseURL!,
-      path: "/",
       sameSite: "Lax" as const,
     })),
   );

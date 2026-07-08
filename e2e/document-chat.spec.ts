@@ -34,7 +34,9 @@ test("upload a PDF, process it, and get a grounded chat answer", async ({
 
   // Open this document's chat (the small button, whose accessible name is the
   // aria-label "Chat about <file>").
-  await page.getByRole("button", { name: "Chat about sample.pdf" }).click();
+  await page
+    .getByRole("button", { name: "Chat about sample.pdf", exact: true })
+    .click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
