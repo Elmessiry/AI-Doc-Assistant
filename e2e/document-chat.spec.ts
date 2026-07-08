@@ -21,7 +21,9 @@ test("upload a PDF, process it, and get a grounded chat answer", async ({
   // redirect to /login.
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/dashboard/);
-  await expect(page.getByRole("button", { name: "Upload a document" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Upload a document" }),
+  ).toBeVisible();
 
   // Upload the fixture. The file input is visually hidden but still settable.
   await page.locator('input[type="file"]').setInputFiles(fixturePdf);
