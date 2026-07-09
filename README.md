@@ -101,4 +101,4 @@ Because magic-link auth can't be clicked in a headless browser, the test seeds a
 - [x] Chat with retrieval (RAG), streaming, and history
 - [x] Observability (Sentry + PostHog)
 - [x] End-to-end test + CI
-- [ ] Deploy to a custom domain
+- [x] Deploy to a custom domain
