@@ -16,6 +16,12 @@ type Status = "processing" | "processed" | "failed";
 // Heuristic — tune if a legitimately tiny PDF is ever wrongly rejected.
 const MIN_TEXT_LENGTH = 100;
 
+// How long a "processing" claim stays valid before another run may re-take it.
+// Guards against a hard platform kill mid-pipeline leaving a document locked
+// forever. Must comfortably exceed the longest a single run can live (the
+// serverless function duration limit) so two live runs never overlap.
+const PROCESSING_LEASE_MS = 5 * 60_000;
+
 export async function POST(req: Request) {
   const supabase = await createClient();
 
@@ -86,16 +92,30 @@ export async function POST(req: Request) {
   }
 
   // Atomically claim the document before the expensive work: flip it to
-  // "processing" only if it isn't already. The .neq guard is the concurrency
-  // lock — if two requests race for the same id, Postgres serializes the writes
-  // and the loser re-checks its WHERE against the now-"processing" row, so
-  // exactly one update matches. That keeps the clear→parse→insert pipeline
-  // below from running twice and producing duplicate chunks.
+  // "processing" only if no other run holds a live claim. The WHERE is the
+  // concurrency lock — if two requests race for the same id, Postgres
+  // serializes the writes and the loser re-checks its WHERE against the
+  // now-claimed row, so exactly one update matches. That keeps the
+  // clear→parse→insert pipeline below from running twice and producing
+  // duplicate chunks.
+  //
+  // The claim is a lease, not a permanent lock: a hard platform kill
+  // mid-pipeline leaves the row at "processing" with nobody to release it, so
+  // a claim older than the lease window (far longer than the function could
+  // possibly run) is treated as abandoned and can be re-taken. The is.null arm
+  // covers rows stuck at "processing" from before the column existed.
+  const leaseCutoff = new Date(Date.now() - PROCESSING_LEASE_MS).toISOString();
   const { data: claimed, error: claimError } = await supabase
     .from("documents")
-    .update({ status: "processing", status_detail: null })
+    .update({
+      status: "processing",
+      status_detail: null,
+      processing_started_at: new Date().toISOString(),
+    })
     .eq("id", documentId)
-    .neq("status", "processing")
+    .or(
+      `status.neq.processing,processing_started_at.lt.${leaseCutoff},processing_started_at.is.null`,
+    )
     .select("id");
 
   if (claimError) {
