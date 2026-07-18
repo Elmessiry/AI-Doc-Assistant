@@ -82,10 +82,19 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
     return () => abortRef.current?.abort();
   }, []);
 
-  // Move focus into the dialog when it opens so keyboard users start inside it.
+  // Move focus into the dialog when it opens so keyboard users start inside
+  // it. The container itself (tabIndex={-1} below) is the target: it's
+  // always a valid focus target on mount, even while history is still
+  // loading and the input below is disabled={loadingHistory}.
   useEffect(() => {
-    inputRef.current?.focus();
+    dialogRef.current?.focus();
   }, []);
+
+  // Once history finishes loading the input is no longer disabled — hand
+  // focus off to it so keyboard users land where they'll actually type.
+  useEffect(() => {
+    if (!loadingHistory) inputRef.current?.focus();
+  }, [loadingHistory]);
 
   // Modal keyboard behaviour: Escape closes; Tab is trapped within the dialog
   // so focus can't wander to the page behind it (what aria-modal promises).
@@ -104,10 +113,20 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+
+      // Right after mount (or whenever nothing inside has focus yet) the
+      // dialog container holds focus instead — it's excluded from
+      // `focusable` by the [tabindex]:not([tabindex="-1"]) clause above, so
+      // it won't match `first`/`last` below. Handle it explicitly so Tab
+      // still lands inside the dialog instead of escaping to the page.
+      if (active === dialogRef.current) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      } else if (!e.shiftKey && active === last) {
         e.preventDefault();
         first.focus();
       }
@@ -212,6 +231,7 @@ export function ChatPanel({ documentId, fileName, onClose }: ChatPanelProps) {
       role="dialog"
       aria-modal="true"
       aria-label={`Chat about ${fileName}`}
+      tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
     >
       <div className="flex h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl sm:h-[80vh] dark:border-zinc-800 dark:bg-zinc-950">

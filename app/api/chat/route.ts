@@ -84,10 +84,13 @@ export async function POST(req: Request) {
   // 4. RETRIEVAL. v1 strategy: fetch *all* chunks for this document, ordered
   //    so the model reads them in the document's own sequence. RLS on
   //    document_chunks limits this to the caller's rows, so another user's id
-  //    simply returns nothing rather than leaking content.
+  //    simply returns nothing rather than leaking content. We still filter on
+  //    user_id explicitly — same reasoning as the rate-limit query above: don't
+  //    lean on RLS alone in case a policy is ever loosened.
   const { data: chunks, error: chunksError } = await supabase
     .from("document_chunks")
     .select("content")
+    .eq("user_id", user.id)
     .eq("document_id", documentId)
     .order("chunk_index", { ascending: true });
 
@@ -109,24 +112,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // 5. Record this request for the rate-limit window. We log only now — after
-  //    retrieval succeeds — so validation errors and 404s don't count against
-  //    the user. RLS's own check ties the row to auth.uid(); we pass user_id
-  //    explicitly for clarity. (Check-then-insert isn't atomic, so a burst of
-  //    concurrent requests could slip a couple over 30 — acceptable here.)
-  const { error: logError } = await supabase
-    .from("chat_requests")
-    .insert({ user_id: user.id });
-
-  if (logError) {
-    console.error("chat: rate-limit log insert failed:", logError.message);
-    return Response.json(
-      { error: "Could not record request" },
-      { status: 500 },
-    );
-  }
-
-  // 6. CONVERSATION MEMORY. The UI shows a continuous conversation, so the
+  // 5. CONVERSATION MEMORY. The UI shows a continuous conversation, so the
   //    model must see it too — otherwise "summarize that" has no antecedent.
   //    Load the latest turns (newest-first so LIMIT keeps the most recent,
   //    then back into chronological order). Best-effort: without history the
@@ -135,6 +121,7 @@ export async function POST(req: Request) {
   const { data: history, error: historyError } = await supabase
     .from("messages")
     .select("role, content")
+    .eq("user_id", user.id)
     .eq("document_id", documentId)
     .order("created_at", { ascending: false })
     .limit(HISTORY_LIMIT);
@@ -145,7 +132,7 @@ export async function POST(req: Request) {
 
   const historyMessages = ((history ?? []) as ChatMessage[]).reverse();
 
-  // 7. GENERATION. Glue the chunks back into one context blob (blank line
+  // 6. GENERATION. Glue the chunks back into one context blob (blank line
   //    between chunks so the model reads them as distinct passages). The
   //    document context lives in the system message so every user turn —
   //    past and present — stays a plain question.
@@ -164,7 +151,7 @@ export async function POST(req: Request) {
     { role: "user", content: message },
   ];
 
-  // 8. Ask the model, streaming. On stream:true OpenRouter still replies with
+  // 7. Ask the model, streaming. On stream:true OpenRouter still replies with
   //    a normal JSON error (and non-200 status) if something is wrong up front,
   //    so we can check res.ok BEFORE we commit to a streaming response.
   let modelRes: Response;
@@ -182,6 +169,24 @@ export async function POST(req: Request) {
     return Response.json(
       { error: "The model could not answer right now" },
       { status: 502 },
+    );
+  }
+
+  // 8. Record this request for the rate-limit window. We tick the counter only
+  //    now — after the model call is confirmed OK — so validation errors, 404s,
+  //    and upstream 5xx/502s don't burn a user's slot. RLS's own check ties the
+  //    row to auth.uid(); we pass user_id explicitly for clarity. (Check-then-
+  //    insert isn't atomic, so a burst of concurrent requests could slip a
+  //    couple over 30 — acceptable here.)
+  const { error: logError } = await supabase
+    .from("chat_requests")
+    .insert({ user_id: user.id });
+
+  if (logError) {
+    console.error("chat: rate-limit log insert failed:", logError.message);
+    return Response.json(
+      { error: "Could not record request" },
+      { status: 500 },
     );
   }
 
