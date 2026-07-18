@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import posthog from "posthog-js";
 import * as Sentry from "@sentry/nextjs";
 import { createClient } from "@/lib/supabase/client";
@@ -88,7 +88,17 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
 
   // `silent` skips the full-screen loading state so background polling
   // doesn't blank the list every couple of seconds.
+  //
+  // The refreshKey effect and the poll timer can both have a fetch in flight
+  // at once, with no guarantee they resolve in the order they started. Each
+  // call is tagged with a ticket; only the response whose ticket still
+  // matches the latest call is allowed to commit state, so a slow, stale
+  // response can't overwrite what a newer one already wrote (e.g. making a
+  // just-uploaded document briefly vanish).
+  const requestIdRef = useRef(0);
+
   const fetchDocuments = useCallback(async (silent = false) => {
+    const requestId = ++requestIdRef.current;
     if (!silent) setLoading(true);
     setError(null);
 
@@ -100,6 +110,8 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
           "id, file_name, file_size, storage_path, created_at, status, status_detail",
         )
         .order("created_at", { ascending: false });
+
+      if (requestIdRef.current !== requestId) return;
 
       if (fetchError) {
         // A background poll must not blow away the visible list on a transient
@@ -116,6 +128,8 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
         setDocuments(data ?? []);
       }
     } catch (err) {
+      if (requestIdRef.current !== requestId) return;
+
       if (silent) {
         setDocuments((prev) => [...prev]);
       } else {
@@ -125,7 +139,7 @@ export function DocumentList({ refreshKey = 0 }: DocumentListProps) {
         setDocuments([]);
       }
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && requestIdRef.current === requestId) setLoading(false);
     }
   }, []);
 

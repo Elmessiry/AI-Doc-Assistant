@@ -1,4 +1,5 @@
 import { PDFParse } from "pdf-parse";
+import * as Sentry from "@sentry/nextjs";
 import { createClient } from "@/lib/supabase/server";
 import { captureServerEvent } from "@/lib/posthog-server";
 import { chunkText } from "@/lib/chunk";
@@ -45,12 +46,20 @@ export async function POST(req: Request) {
   }
 
   // Records the outcome on the document row so the UI can show it. Scoped to
-  // this id, which RLS already restricts to the caller's own rows.
-  const mark = (status: Status, detail: string | null = null) =>
-    supabase
+  // this id, which RLS already restricts to the caller's own rows. A write
+  // error is logged rather than thrown: a failed status update shouldn't mask
+  // the real failure we're already reporting to the caller. Returns the error
+  // so callers that want to escalate (e.g. the terminal "processed" mark) can.
+  const mark = async (status: Status, detail: string | null = null) => {
+    const { error } = await supabase
       .from("documents")
       .update({ status, status_detail: detail })
       .eq("id", documentId);
+    if (error) {
+      console.error(`process-document: mark(${status}) failed:`, error.message);
+    }
+    return { error };
+  };
 
   // 3. Fetch the metadata row. RLS on `documents` limits this to the
   //    caller's own rows, so someone else's id simply comes back null → 404.
@@ -76,14 +85,36 @@ export async function POST(req: Request) {
     );
   }
 
-  // If we can't even record "processing", DB writes are failing — bail before
-  // doing the expensive download + parse work, and don't leave the UI polling
-  // a doc that will never move past "pending".
-  const { error: processingError } = await mark("processing");
-  if (processingError) {
+  // Atomically claim the document before the expensive work: flip it to
+  // "processing" only if it isn't already. The .neq guard is the concurrency
+  // lock — if two requests race for the same id, Postgres serializes the writes
+  // and the loser re-checks its WHERE against the now-"processing" row, so
+  // exactly one update matches. That keeps the clear→parse→insert pipeline
+  // below from running twice and producing duplicate chunks.
+  const { data: claimed, error: claimError } = await supabase
+    .from("documents")
+    .update({ status: "processing", status_detail: null })
+    .eq("id", documentId)
+    .neq("status", "processing")
+    .select("id");
+
+  if (claimError) {
+    // A write error here means DB writes are failing — bail before the
+    // expensive download + parse, and don't leave the UI polling a doc that
+    // will never move past "pending".
+    console.error("process-document: claim failed:", claimError.message);
     return Response.json(
       { error: "Could not update document status" },
       { status: 500 },
+    );
+  }
+
+  // No row updated means another run already holds the claim (status is
+  // "processing"). Bail rather than duplicate its work.
+  if (!claimed || claimed.length === 0) {
+    return Response.json(
+      { error: "Document is already being processed" },
+      { status: 409 },
     );
   }
 
@@ -178,7 +209,13 @@ export async function POST(req: Request) {
     );
   }
 
-  await mark("processed");
+  const { error: processedError } = await mark("processed");
+  if (processedError) {
+    // Chunks are saved but the row is stuck at "processing" — the UI will keep
+    // polling a doc that is actually done. Escalate to Sentry so we notice
+    // documents that silently never flip to "processed".
+    Sentry.captureException(processedError);
+  }
   captureServerEvent(req, user.id, "document_processed", {
     chunk_count: rows.length,
   });

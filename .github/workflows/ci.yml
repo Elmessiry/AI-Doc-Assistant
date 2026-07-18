@@ -22,6 +22,7 @@ jobs:
 
   e2e:
     name: E2E (Playwright)
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
