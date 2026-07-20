@@ -6,6 +6,15 @@ const nextConfig: NextConfig = {
   // runtime. Bundling breaks that path ("Setting up fake worker failed").
   // Keep both as native node_modules requires so the worker resolves.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
+  // pdfjs pulls in @napi-rs/canvas (its DOMMatrix/ImageData/Path2D polyfill for
+  // Node) via a dynamic `require()` inside a try/catch. @vercel/nft can't follow
+  // that statically, so the package is dropped from the serverless bundle and
+  // the require fails at runtime — which the external-module loader turns into a
+  // fatal "ReferenceError: DOMMatrix is not defined", crashing the function at
+  // init. Force the package (and its native binary) into this route's trace.
+  outputFileTracingIncludes: {
+    "/api/process-document": ["./node_modules/@napi-rs/**/*"],
+  },
   async rewrites() {
     return [
       {
