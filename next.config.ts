@@ -6,14 +6,23 @@ const nextConfig: NextConfig = {
   // runtime. Bundling breaks that path ("Setting up fake worker failed").
   // Keep both as native node_modules requires so the worker resolves.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
-  // pdfjs pulls in @napi-rs/canvas (its DOMMatrix/ImageData/Path2D polyfill for
-  // Node) via a dynamic `require()` inside a try/catch. @vercel/nft can't follow
-  // that statically, so the package is dropped from the serverless bundle and
-  // the require fails at runtime — which the external-module loader turns into a
-  // fatal "ReferenceError: DOMMatrix is not defined", crashing the function at
-  // init. Force the package (and its native binary) into this route's trace.
+  // pdfjs loads several things through dynamic requires/imports that @vercel/nft
+  // can't follow statically, so they get dropped from the serverless bundle and
+  // fail only on Vercel (a full local node_modules hides all of this):
+  //   - @napi-rs/canvas: pdfjs's DOMMatrix/ImageData/Path2D polyfill, required in
+  //     a try/catch. Missing → fatal "ReferenceError: DOMMatrix is not defined"
+  //     that the external-module loader throws at function init.
+  //   - pdf.worker.mjs: the fake (main-thread) worker imports it by relative
+  //     path. Missing → "Setting up fake worker failed" → getText() throws → 422.
+  //   - standard_fonts / cmaps: font metrics and CJK maps loaded at parse time.
+  // Force all of them into this route's trace.
   outputFileTracingIncludes: {
-    "/api/process-document": ["./node_modules/@napi-rs/**/*"],
+    "/api/process-document": [
+      "./node_modules/@napi-rs/**/*",
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+      "./node_modules/pdfjs-dist/standard_fonts/**/*",
+      "./node_modules/pdfjs-dist/cmaps/**/*",
+    ],
   },
   async rewrites() {
     return [
